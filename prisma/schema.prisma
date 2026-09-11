@@ -1,0 +1,581 @@
+// ============================================================================
+// RielVest — Cambodian (CSX) market data and transparent analysis
+// ============================================================================
+// Design notes
+//  * Money is stored in Khmer riel, because riel is what CSX and SERC publish.
+//    USD figures are derived at read time from FxRate; nothing is stored twice.
+//  * Nothing derivable is persisted. Holdings, average cost, profit and loss,
+//    market capitalisation from price, and every analysis score are computed in
+//    the service layer so they can never drift from the underlying rows.
+//  * Every table holding third-party data carries `sourceCode`, so the product
+//    can always answer "where did this number come from, and when?".
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// Connection strings live in prisma.config.ts (Prisma 7): migrations use
+// DIRECT_URL because Supabase poolers cannot run DDL, while the application
+// connects through the pooled DATABASE_URL via the pg driver adapter.
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Data sources and ingestion bookkeeping
+// ---------------------------------------------------------------------------
+
+enum SourceKind {
+  realtime_api
+  dataset_file
+  publication
+  curated
+}
+
+model DataSource {
+  code        String     @id
+  name        String
+  publisher   String
+  homepageUrl String?    @map("homepage_url")
+  endpointUrl String?    @map("endpoint_url")
+  kind        SourceKind
+  cadence     String?
+  license     String?
+  description String?
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  ingestionRuns       IngestionRun[]
+  companies           Company[]
+  stockQuotes         StockQuote[]
+  indexQuotes         IndexQuote[]
+  fxRates             FxRate[]
+  marketPeriodStats   MarketPeriodStat[]
+  companyPeriodStats  CompanyPeriodStat[]
+  financialStatements FinancialStatement[]
+  dividends           Dividend[]
+  marketEvents        MarketEvent[]
+
+  @@map("data_sources")
+}
+
+enum RunStatus {
+  running
+  success
+  partial
+  failed
+  skipped
+}
+
+enum RunTrigger {
+  manual
+  schedule
+  startup
+}
+
+model IngestionRun {
+  id          BigInt     @id @default(autoincrement())
+  sourceCode  String     @map("source_code")
+  adapterKey  String     @map("adapter_key")
+  status      RunStatus  @default(running)
+  trigger     RunTrigger @default(manual)
+  startedAt   DateTime   @default(now()) @map("started_at")
+  finishedAt  DateTime?  @map("finished_at")
+  rowsRead    Int        @default(0) @map("rows_read")
+  rowsWritten Int        @default(0) @map("rows_written")
+  rowsSkipped Int        @default(0) @map("rows_skipped")
+  error       String?
+  warnings    String[]   @default([])
+  detail      Json       @default("{}")
+
+  source DataSource @relation(fields: [sourceCode], references: [code], onDelete: Cascade)
+
+  @@index([sourceCode, startedAt(sort: Desc)])
+  @@index([adapterKey, startedAt(sort: Desc)])
+  @@map("ingestion_runs")
+}
+
+// ---------------------------------------------------------------------------
+// Listed companies
+// ---------------------------------------------------------------------------
+
+enum Board {
+  main
+  growth
+}
+
+enum ListingStatus {
+  listed
+  suspended
+  delisted
+}
+
+model Company {
+  id          String        @id @default(uuid()) @db.Uuid
+  symbol      String        @unique
+  isin        String?       @unique
+  name        String
+  nameKh      String?       @map("name_kh")
+  legalName   String?       @map("legal_name")
+  sector      String?
+  industry    String?
+  board       Board         @default(main)
+  listingDate DateTime?     @map("listing_date") @db.Date
+  ipoPriceKhr Decimal?      @map("ipo_price_khr") @db.Decimal(18, 2)
+  website     String?
+  description String?
+  status      ListingStatus @default(listed)
+  sourceCode  String?       @map("source_code")
+  sourceUrl   String?       @map("source_url")
+  sourceNote  String?       @map("source_note")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  source              DataSource?          @relation(fields: [sourceCode], references: [code])
+  quotes              StockQuote[]
+  periodStats         CompanyPeriodStat[]
+  financialStatements FinancialStatement[]
+  dividends           Dividend[]
+  events              MarketEvent[]
+  transactions        Transaction[]
+  watchlistItems      WatchlistItem[]
+  narratives          AiNarrative[]
+
+  @@index([board])
+  @@index([sector])
+  @@map("companies")
+}
+
+// ---------------------------------------------------------------------------
+// Daily market data
+// ---------------------------------------------------------------------------
+
+/// One row per company per trading session, captured from the CSX daily summary.
+model StockQuote {
+  id          BigInt   @id @default(autoincrement())
+  companyId   String   @map("company_id") @db.Uuid
+  tradeDate   DateTime @map("trade_date") @db.Date
+  openKhr     Decimal? @map("open_khr") @db.Decimal(18, 2)
+  highKhr     Decimal? @map("high_khr") @db.Decimal(18, 2)
+  lowKhr      Decimal? @map("low_khr") @db.Decimal(18, 2)
+  closeKhr    Decimal  @map("close_khr") @db.Decimal(18, 2)
+  /// Signed: negative when the close fell against the previous session.
+  changeKhr   Decimal? @map("change_khr") @db.Decimal(18, 2)
+  volume      BigInt?
+  valueKhr    Decimal? @map("value_khr") @db.Decimal(20, 2)
+  /// Published by CSX itself. Null means CSX reported no value (typically a
+  /// loss-making issuer), which is meaningfully different from zero.
+  pe          Decimal? @db.Decimal(14, 4)
+  pb          Decimal? @db.Decimal(14, 4)
+  dividendKhr Decimal? @map("dividend_khr") @db.Decimal(18, 4)
+  capturedAt  DateTime @default(now()) @map("captured_at")
+  sourceCode  String   @map("source_code")
+
+  company Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  source  DataSource @relation(fields: [sourceCode], references: [code])
+
+  @@unique([companyId, tradeDate])
+  @@index([companyId, tradeDate(sort: Desc)])
+  @@index([tradeDate(sort: Desc)])
+  @@map("stock_quotes")
+}
+
+/// The CSX composite index, one row per trading session.
+model IndexQuote {
+  id            BigInt   @id @default(autoincrement())
+  indexCode     String   @default("CSX") @map("index_code")
+  tradeDate     DateTime @map("trade_date") @db.Date
+  value         Decimal  @db.Decimal(14, 4)
+  change        Decimal? @db.Decimal(14, 4)
+  changePercent Decimal? @map("change_percent") @db.Decimal(10, 4)
+  open          Decimal? @db.Decimal(14, 4)
+  high          Decimal? @db.Decimal(14, 4)
+  low           Decimal? @db.Decimal(14, 4)
+  /// Upstream marker such as "market.close".
+  indexTime     String?  @map("index_time")
+  /// Exchange-wide figures CSX publishes alongside the index for that session.
+  marketCapKhr    Decimal? @map("market_cap_khr") @db.Decimal(24, 2)
+  totalVolume     BigInt?  @map("total_volume")
+  totalValueKhr   Decimal? @map("total_value_khr") @db.Decimal(24, 2)
+  capturedAt    DateTime @default(now()) @map("captured_at")
+  sourceCode    String   @map("source_code")
+
+  source DataSource @relation(fields: [sourceCode], references: [code])
+
+  @@unique([indexCode, tradeDate])
+  @@index([indexCode, tradeDate(sort: Desc)])
+  @@map("index_quotes")
+}
+
+/// National Bank of Cambodia reference rates, used only for display conversion.
+model FxRate {
+  id            BigInt   @id @default(autoincrement())
+  baseCurrency  String   @map("base_currency")
+  quoteCurrency String   @map("quote_currency")
+  rateDate      DateTime @map("rate_date") @db.Date
+  bid           Decimal? @db.Decimal(18, 4)
+  ask           Decimal? @db.Decimal(18, 4)
+  average       Decimal  @db.Decimal(18, 4)
+  capturedAt    DateTime @default(now()) @map("captured_at")
+  sourceCode    String   @map("source_code")
+
+  source DataSource @relation(fields: [sourceCode], references: [code])
+
+  @@unique([baseCurrency, quoteCurrency, rateDate])
+  @@index([baseCurrency, quoteCurrency, rateDate(sort: Desc)])
+  @@map("fx_rates")
+}
+
+// ---------------------------------------------------------------------------
+// Reported period statistics
+// ---------------------------------------------------------------------------
+// CSX and SERC publish aggregates on their own cadence. These are *reported*
+// figures, not rollups of StockQuote, so they live in their own tables and are
+// always displayed with the period they describe.
+
+enum PeriodType {
+  month
+  quarter
+  year
+}
+
+enum BoardScope {
+  main
+  growth
+  all
+}
+
+model MarketPeriodStat {
+  id               BigInt     @id @default(autoincrement())
+  board            BoardScope @default(all)
+  periodType       PeriodType @map("period_type")
+  periodStart      DateTime   @map("period_start") @db.Date
+  periodEnd        DateTime   @map("period_end") @db.Date
+  label            String
+  tradingDays      Int?       @map("trading_days")
+  listedCompanies  Int?       @map("listed_companies")
+  listedShares     Decimal?   @map("listed_shares") @db.Decimal(20, 2)
+  marketCapKhr     Decimal?   @map("market_cap_khr") @db.Decimal(24, 2)
+  tradingVolume    Decimal?   @map("trading_volume") @db.Decimal(20, 2)
+  tradingValueKhr  Decimal?   @map("trading_value_khr") @db.Decimal(24, 2)
+  dailyAvgVolume   Decimal?   @map("daily_avg_volume") @db.Decimal(20, 2)
+  dailyAvgValueKhr Decimal?   @map("daily_avg_value_khr") @db.Decimal(24, 2)
+  buyOrderVolume   Decimal?   @map("buy_order_volume") @db.Decimal(20, 2)
+  sellOrderVolume  Decimal?   @map("sell_order_volume") @db.Decimal(20, 2)
+  indexOpen        Decimal?   @map("index_open") @db.Decimal(14, 4)
+  indexClose       Decimal?   @map("index_close") @db.Decimal(14, 4)
+  indexHigh        Decimal?   @map("index_high") @db.Decimal(14, 4)
+  indexLow         Decimal?   @map("index_low") @db.Decimal(14, 4)
+  investorCount    Int?       @map("investor_count")
+  sourceCode       String     @map("source_code")
+  sourceDatasetId  String?    @map("source_dataset_id")
+  sourceUrl        String?    @map("source_url")
+  importedAt       DateTime   @default(now()) @map("imported_at")
+
+  source DataSource @relation(fields: [sourceCode], references: [code])
+
+  @@unique([board, periodType, periodStart])
+  @@index([periodType, periodStart(sort: Desc)])
+  @@map("market_period_stats")
+}
+
+model CompanyPeriodStat {
+  id               BigInt     @id @default(autoincrement())
+  companyId        String     @map("company_id") @db.Uuid
+  periodType       PeriodType @map("period_type")
+  periodStart      DateTime   @map("period_start") @db.Date
+  periodEnd        DateTime   @map("period_end") @db.Date
+  label            String
+  marketCapKhr     Decimal?   @map("market_cap_khr") @db.Decimal(24, 2)
+  listedShares     Decimal?   @map("listed_shares") @db.Decimal(20, 2)
+  tradingVolume    Decimal?   @map("trading_volume") @db.Decimal(20, 2)
+  tradingValueKhr  Decimal?   @map("trading_value_khr") @db.Decimal(24, 2)
+  dailyAvgVolume   Decimal?   @map("daily_avg_volume") @db.Decimal(20, 2)
+  dailyAvgValueKhr Decimal?   @map("daily_avg_value_khr") @db.Decimal(24, 2)
+  sourceCode       String     @map("source_code")
+  sourceDatasetId  String?    @map("source_dataset_id")
+  sourceUrl        String?    @map("source_url")
+  importedAt       DateTime   @default(now()) @map("imported_at")
+
+  company Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  source  DataSource @relation(fields: [sourceCode], references: [code])
+
+  @@unique([companyId, periodType, periodStart])
+  @@index([companyId, periodType, periodStart(sort: Desc)])
+  @@map("company_period_stats")
+}
+
+// ---------------------------------------------------------------------------
+// Fundamentals — only ever written from a citable filing
+// ---------------------------------------------------------------------------
+
+enum FiscalPeriod {
+  FY
+  H1
+  Q1
+  Q2
+  Q3
+  Q4
+}
+
+model FinancialStatement {
+  id                 BigInt       @id @default(autoincrement())
+  companyId          String       @map("company_id") @db.Uuid
+  fiscalYear         Int          @map("fiscal_year")
+  fiscalPeriod       FiscalPeriod @default(FY) @map("fiscal_period")
+  periodEnd          DateTime     @map("period_end") @db.Date
+  currency           String       @default("KHR")
+  revenue            Decimal?     @db.Decimal(24, 2)
+  grossProfit        Decimal?     @map("gross_profit") @db.Decimal(24, 2)
+  operatingIncome    Decimal?     @map("operating_income") @db.Decimal(24, 2)
+  netIncome          Decimal?     @map("net_income") @db.Decimal(24, 2)
+  totalAssets        Decimal?     @map("total_assets") @db.Decimal(24, 2)
+  totalLiabilities   Decimal?     @map("total_liabilities") @db.Decimal(24, 2)
+  totalEquity        Decimal?     @map("total_equity") @db.Decimal(24, 2)
+  totalDebt          Decimal?     @map("total_debt") @db.Decimal(24, 2)
+  cashAndEquivalents Decimal?     @map("cash_and_equivalents") @db.Decimal(24, 2)
+  operatingCashFlow  Decimal?     @map("operating_cash_flow") @db.Decimal(24, 2)
+  eps                Decimal?     @db.Decimal(18, 4)
+  bookValuePerShare  Decimal?     @map("book_value_per_share") @db.Decimal(18, 4)
+  sharesOutstanding  BigInt?      @map("shares_outstanding")
+  isAudited          Boolean?     @map("is_audited")
+  sourceCode         String       @map("source_code")
+  sourceUrl          String?      @map("source_url")
+  reportedAt         DateTime?    @map("reported_at") @db.Date
+  importedAt         DateTime     @default(now()) @map("imported_at")
+
+  company Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  source  DataSource @relation(fields: [sourceCode], references: [code])
+
+  @@unique([companyId, fiscalYear, fiscalPeriod])
+  @@index([companyId, fiscalYear(sort: Desc)])
+  @@map("financial_statements")
+}
+
+enum DividendType {
+  cash
+  stock
+  special
+}
+
+model Dividend {
+  id                 BigInt       @id @default(autoincrement())
+  companyId          String       @map("company_id") @db.Uuid
+  fiscalYear         Int?         @map("fiscal_year")
+  dividendType       DividendType @default(cash) @map("dividend_type")
+  amountPerShareKhr  Decimal      @map("amount_per_share_khr") @db.Decimal(18, 4)
+  exDate             DateTime?    @map("ex_date") @db.Date
+  recordDate         DateTime?    @map("record_date") @db.Date
+  paymentDate        DateTime?    @map("payment_date") @db.Date
+  announcementDate   DateTime?    @map("announcement_date") @db.Date
+  /// Payout ratio and total distribution as disclosed, when stated.
+  payoutRatioPercent Decimal?     @map("payout_ratio_percent") @db.Decimal(10, 4)
+  totalAmountKhr     Decimal?     @map("total_amount_khr") @db.Decimal(24, 4)
+  /// "Annually", "Quarterly" and so on, as the issuer described it.
+  frequency          String?
+  sourceCode         String       @map("source_code")
+  sourceUrl          String?      @map("source_url")
+  /// The disclosure this was read from; makes re-imports idempotent.
+  sourceRef          String?      @map("source_ref")
+  note               String?
+  importedAt         DateTime     @default(now()) @map("imported_at")
+
+  company Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  source  DataSource @relation(fields: [sourceCode], references: [code])
+
+  @@unique([sourceCode, sourceRef])
+  @@index([companyId, paymentDate(sort: Desc)])
+  @@map("dividends")
+}
+
+enum EventType {
+  announcement
+  dividend
+  listing
+  suspension
+  report
+  regulatory
+}
+
+model MarketEvent {
+  id         BigInt    @id @default(autoincrement())
+  companyId  String?   @map("company_id") @db.Uuid
+  eventDate  DateTime  @map("event_date") @db.Date
+  eventType  EventType @map("event_type")
+  title      String
+  summary    String?
+  url        String?
+  /// The publisher's own identifier, which makes re-imports idempotent even
+  /// when a title or date is later corrected upstream.
+  sourceRef  String    @map("source_ref")
+  /// Ticker as the publisher wrote it, kept when it names no listed equity
+  /// (CSX discloses bond issuers on the same feed).
+  rawSymbol  String?   @map("raw_symbol")
+  sourceCode String    @map("source_code")
+  importedAt DateTime  @default(now()) @map("imported_at")
+
+  company Company?   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  source  DataSource @relation(fields: [sourceCode], references: [code])
+
+  @@unique([sourceCode, sourceRef])
+  @@index([eventDate(sort: Desc)])
+  @@index([companyId, eventDate(sort: Desc)])
+  @@map("market_events")
+}
+
+/// A generated plain-language summary of a company's computed analysis.
+///
+/// Cached rather than produced per request for three reasons: the wording only
+/// changes when the session does, a page load must not wait on a model, and the
+/// free API tier is a daily budget rather than a per-visitor one.
+///
+/// `source` records whether the text came from the model or from the
+/// deterministic engine, so a reader — and a maintainer — can always tell.
+model AiNarrative {
+  id             BigInt   @id @default(autoincrement())
+  companyId      String   @map("company_id") @db.Uuid
+  /// The session the summary describes; regenerated when a new one lands.
+  tradeDate      DateTime @map("trade_date") @db.Date
+  language       String
+  lines          String[]
+  /// 'model' when generated text passed the number guard, else 'engine'.
+  source         String
+  model          String?
+  /// Why the model's output was rejected, when it was.
+  fallbackReason String?  @map("fallback_reason")
+  generatedAt    DateTime @default(now()) @map("generated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, tradeDate, language])
+  @@index([companyId, tradeDate(sort: Desc)])
+  @@map("ai_narratives")
+}
+
+// ---------------------------------------------------------------------------
+// Accounts and watchlists
+// ---------------------------------------------------------------------------
+// Portfolio and transaction tables below are retained only for migration safety.
+// The product no longer exposes or provisions this legacy feature.
+
+enum Currency {
+  KHR
+  USD
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  displayName  String    @map("display_name")
+  /// Display preference only; every stored amount is in riel.
+  baseCurrency Currency  @default(KHR) @map("base_currency")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  lastLoginAt  DateTime? @map("last_login_at")
+
+  refreshTokens RefreshToken[]
+  portfolios    Portfolio[]
+  watchlists    Watchlist[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  /// Only the SHA-256 digest is stored, so a leak cannot be replayed.
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  userAgent String?   @map("user_agent")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt(sort: Desc)])
+  @@map("refresh_tokens")
+}
+
+model Portfolio {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  name        String
+  description String?
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("portfolios")
+}
+
+enum TransactionType {
+  BUY
+  SELL
+  DIVIDEND
+  DEPOSIT
+  WITHDRAWAL
+}
+
+model Transaction {
+  id          String          @id @default(uuid()) @db.Uuid
+  portfolioId String          @map("portfolio_id") @db.Uuid
+  /// Null for pure cash movements.
+  companyId   String?         @map("company_id") @db.Uuid
+  type        TransactionType
+  tradeDate   DateTime        @map("trade_date") @db.Date
+  /// Shares for BUY/SELL; the share count a dividend was paid on for DIVIDEND.
+  quantity    Decimal?        @db.Decimal(20, 4)
+  priceKhr    Decimal?        @map("price_khr") @db.Decimal(18, 4)
+  /// Cash amount for DEPOSIT/WITHDRAWAL/DIVIDEND. For BUY/SELL the cash effect
+  /// is quantity x price adjusted for costs, so it is not stored.
+  amountKhr   Decimal?        @map("amount_khr") @db.Decimal(20, 2)
+  feesKhr     Decimal         @default(0) @map("fees_khr") @db.Decimal(18, 2)
+  taxesKhr    Decimal         @default(0) @map("taxes_khr") @db.Decimal(18, 2)
+  note        String?
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  company   Company?  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@index([portfolioId, tradeDate, createdAt])
+  @@index([companyId])
+  @@map("transactions")
+}
+
+model Watchlist {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items WatchlistItem[]
+
+  @@unique([userId, name])
+  @@map("watchlists")
+}
+
+model WatchlistItem {
+  id             String   @id @default(uuid()) @db.Uuid
+  watchlistId    String   @map("watchlist_id") @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  note           String?
+  targetPriceKhr Decimal? @map("target_price_khr") @db.Decimal(18, 2)
+  addedAt        DateTime @default(now()) @map("added_at")
+
+  watchlist Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, companyId])
+  @@index([watchlistId])
+  @@map("watchlist_items")
+}

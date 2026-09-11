@@ -1,0 +1,35 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "npm run vercel-build",
+  "installCommand": "npm install",
+  "regions": [
+    "sin1"
+  ],
+  "functions": {
+    "api/index.ts": {
+      "runtime": "@vercel/node@5.3.24",
+      "maxDuration": 30
+    },
+    "api/cron/refresh.ts": {
+      "runtime": "@vercel/node@5.3.24",
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/cron/refresh",
+      "destination": "/api/cron/refresh"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/refresh",
+      "schedule": "30 8 * * 1-5"
+    }
+  ]
+}
