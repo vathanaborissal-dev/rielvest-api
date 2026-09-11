@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RielVest API</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #fbfbf9; color: #1a1a19;
+  }
+  @media (prefers-color-scheme: dark) { body { background: #101010; color: #e8e8e6; } }
+  main { max-width: 33rem; padding: 2rem 1.5rem; }
+  h1 { margin: 0 0 .35rem; font-size: 1.35rem; letter-spacing: -.01em; }
+  p { margin: .5rem 0; opacity: .78; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .875em; }
+  a { color: inherit; }
+  ul { padding-left: 1.1rem; }
+  li { margin: .2rem 0; opacity: .78; }
+  .note { margin-top: 1.4rem; font-size: .8rem; opacity: .55; }
+</style>
+<main>
+  <h1>RielVest API</h1>
+  <p>Cambodian (CSX) market data and a transparent analysis engine. This host serves JSON only — the interface lives elsewhere.</p>
+  <ul>
+    <li><code><a href="/api/health">/api/health</a></code> — status and data sources</li>
+    <li><code><a href="/api/market/digest">/api/market/digest</a></code> — the daily briefing</li>
+    <li><code>/api/market/levels</code> — price levels across the board</li>
+    <li><code>/api/companies</code> — listed companies and analysis</li>
+  </ul>
+  <p class="note">
+    Figures come from Cambodia's public financial datasets and the exchange's own
+    feeds. Values that cannot be sourced are reported as unavailable rather than
+    estimated. <a href="https://github.com/vathanaborissal-dev/rielvest-api">Source</a>.
+  </p>
+</main>

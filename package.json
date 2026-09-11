@@ -1,7 +1,7 @@
 {
   "name": "rielvest_api",
   "version": "1.0.0",
-  "description": "RielVest API — Cambodian (CSX) market data and transparent analysis engine",
+  "description": "RielVest API \u2014 Cambodian (CSX) market data and transparent analysis engine",
   "main": "dist/index.js",
   "type": "module",
   "engines": {

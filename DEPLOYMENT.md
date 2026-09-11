@@ -11,6 +11,15 @@ The UI renders on the server and calls the API over HTTPS. Deploy the API first 
 
 This file lives in the API repo but covers both.
 
+## Live
+
+| | URL |
+|---|---|
+| API | <https://rielvest-api.vercel.app> — [health](https://rielvest-api.vercel.app/api/health) · [digest](https://rielvest-api.vercel.app/api/market/digest) |
+| UI | <https://rielvest-ui.vercel.app> |
+
+Both run in `sin1` (Singapore). Deployed 11 Sep 2026.
+
 ---
 
 ## Before you start
@@ -186,6 +195,9 @@ Look at the cron's invocation log. The adapters are deliberately all-or-nothing 
 ```bash
 npm run ingest -- csx-trade-summary
 ```
+
+**`No Output Directory named "public" found`.**
+Declaring a `buildCommand` makes Vercel expect static build output, even though this project is functions-only. That is why `public/index.html` exists — a small landing page listing the endpoints. An *empty* `public/` is not enough; Vercel rejects that too. Do not delete it.
 
 **Preview deployments hit production data.**
 Both environments share `DATABASE_URL` unless you scope it per-environment in Vercel. For a read-mostly app this is usually what you want; just know that running an ingest against a preview writes to the real database.
