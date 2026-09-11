@@ -1,7 +1,8 @@
 import { averageTurnover } from '../../analysis/liquidity.ts';
 import { buildPriceLevels } from '../../analysis/levels.ts';
 import { rsi, volumeRatio, type Bar } from '../../analysis/indicators.ts';
-import { auctionGuidance, buildOrderTicket } from '../../analysis/orderTicket.ts';
+import { auctionGuidance } from '../../analysis/orderTicket.ts';
+import { buildSessionTicket, typicalSessionRange } from '../../analysis/sessionTicket.ts';
 import { orderSizing, priceBand } from '../../analysis/tradingRules.ts';
 import { toDateString, toNumber } from '../../core/decimal.ts';
 import { CAMBODIA_UTC_OFFSET_MINUTES, daysBetween } from '../../core/dates.ts';
@@ -273,19 +274,18 @@ export async function buildDigest(language: 'en' | 'km' = 'en'): Promise<MarketD
     const sizing = orderSizing(entry.typicalValue, entry.latest.close);
     const other = useSupport ? resistance : support;
 
-    // The pair a trader would actually enter: buy where the price has held,
-    // sell where it has stalled. Either may be unreachable inside today's band.
+    // Exchange limits are not a normal day's movement. Keep entry references
+    // near the latest close; distant historic levels remain visible separately.
+    const typicalRange = typicalSessionRange(entry.bars);
     const ticketFor = (level: typeof support, side: 'buy' | 'sell') =>
-      level === null
-        ? null
-        : buildOrderTicket({
-            side,
-            label: level.label,
-            targetPrice: level.price,
-            basePrice: entry.latest.close,
-            typicalDailyValue: entry.typicalValue,
-            tradeDate: asOf,
-          });
+      buildSessionTicket({
+        side,
+        level,
+        typicalRange,
+        basePrice: entry.latest.close,
+        typicalDailyValue: entry.typicalValue,
+        tradeDate: asOf,
+      });
 
     scored.push({
       score,

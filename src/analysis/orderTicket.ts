@@ -18,6 +18,11 @@ import { orderSizing, priceBand, roundToTick, settlementDate, tickSizeFor } from
 export type TicketSide = 'buy' | 'sell';
 
 export interface OrderTicket {
+  /** Present for near-term scenarios, measured from the recorded close. */
+  distanceKhr?: number;
+  /** Median true range of the latest twenty complete sessions. */
+  typicalRangeKhr?: number;
+  referenceBasis?: string;
   side: TicketSide;
   /** What the price references, e.g. "Support zone". */
   label: string;

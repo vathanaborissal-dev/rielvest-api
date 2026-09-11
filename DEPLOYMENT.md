@@ -226,3 +226,8 @@ The daily ingestion job generates and stores Gemini explanations in English and 
 After configuring a key, either wait for the next scheduled refresh or run `npm run ingest -- narratives` from a securely configured local environment. Existing successful summaries are cached per stock, session and language; new prompt wording takes effect with the next uncached session. Setting a key alone does not generate summaries.
 
 Turnover gates and order sizes require 20 complete daily turnover observations. Zero-trade sessions count as zero; missing sessions/values do not become invented liquidity. The shortlist also excludes quotes from an older session than the latest market record.
+
+
+## Near-term limit references
+
+Briefing tickets use the median true range of the last 20 complete sessions (21 bars including the previous close). Quiet sessions count; missing/invalid OHLC data yields no reference. A historical level is used only on the correct side of the last close, within one median range and the exchange band. Otherwise a half-range pullback/rebound scenario is calculated and rounded toward the close. If no valid tick fits, no reference is shown. This is an explicit product heuristic, not a forecast, fill guarantee or tested support level. Distant historical levels remain separate. The UI shows the KHR distance from the recorded close and puts calculation details and turnover-based size ceilings behind “Basis and size”.
