@@ -85,11 +85,10 @@ function allowedForms(numbers: Set<number>): Set<number> {
 function isSupported(candidate: number, allowed: Set<number>): boolean {
   if (allowed.has(candidate)) return true;
 
-  // A tolerance proportional to the written precision: "1.1" may stand for
-  // anything from 1.05 to 1.15, but "9,240" must be exact to the riel.
+  // Only absorb floating-point representation error. A percentage tolerance
+  // on a share price silently allowed different, unsourced prices through.
   for (const value of allowed) {
-    const scale = Math.max(Math.abs(value), 1);
-    if (Math.abs(value - candidate) <= Math.max(0.005 * scale, 0.005)) return true;
+    if (Math.abs(value - candidate) <= Number.EPSILON * Math.max(Math.abs(value), 1) * 4) return true;
   }
   return false;
 }

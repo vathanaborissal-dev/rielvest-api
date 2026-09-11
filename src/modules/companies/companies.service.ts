@@ -1,3 +1,5 @@
+import { cambodiaToday } from '../../core/dates.ts';
+import { buildDecisionReview } from '../../analysis/decisionReview.ts';
 import { analyseStock } from '../../analysis/engine.ts';
 import { buildPriceLevels, type PriceLevels } from '../../analysis/levels.ts';
 import { buildTradePlan, type TradePlan } from '../../analysis/tradePlan.ts';
@@ -679,4 +681,26 @@ export async function getTradePlan(symbol: string): Promise<TradePlan> {
   if (!company) throw notFound(`No listed company with the ticker ${symbol.toUpperCase()}.`);
   const quotes = await marketRepository.quoteHistory(company.id);
   return buildTradePlan(company.symbol, toBars(quotes.map(toQuotePoint)));
+}
+
+/** Uses stored AI text only; a visitor never starts a paid model request. */
+export async function getDecisionReview(symbol: string) {
+  const company = await repository.findBySymbol(symbol);
+  if (!company) throw notFound(`No listed company with the ticker ${symbol.toUpperCase()}.`);
+  const [analysis, plan, events] = await Promise.all([
+    analyseWithNarrative(symbol),
+    getTradePlan(symbol),
+    prisma.marketEvent.findMany({
+      where: { companyId: company.id },
+      orderBy: { eventDate: 'desc' },
+      take: 2,
+      select: { title: true, eventDate: true, url: true },
+    }),
+  ]);
+  const today = cambodiaToday();
+  const review = buildDecisionReview(analysis, plan, events.map((event) => ({
+    title: event.title, date: toDateString(event.eventDate)!, url: event.url,
+  })), today);
+  review.summary = { lines: analysis.narrative, source: analysis.narrativeSource, model: analysis.narrativeModel };
+  return review;
 }

@@ -16,3 +16,5 @@ companiesRouter.get('/:symbol/quick-read', asyncHandler(controller.quickRead));
 companiesRouter.get('/:symbol/analysis', asyncHandler(controller.analysis));
 companiesRouter.get('/:symbol/levels', asyncHandler(controller.levels));
 companiesRouter.get('/:symbol/plan', asyncHandler(controller.plan));
+
+companiesRouter.get('/:symbol/decision-review', asyncHandler(controller.decisionReview));

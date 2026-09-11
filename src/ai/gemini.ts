@@ -60,7 +60,7 @@ export function createGeminiProvider(): NarrativeProvider | null {
             mime_type: 'application/json',
             schema: RESPONSE_SCHEMA,
           },
-        });
+        }, { signal: AbortSignal.timeout(8_000) });
       } catch (error) {
         throw upstreamUnavailable('The narrative model could not be reached.', {
           cause: error instanceof Error ? error.message : String(error),

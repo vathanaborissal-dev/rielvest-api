@@ -64,3 +64,8 @@ export async function compare(req: Request, res: Response): Promise<void> {
   const { symbols } = validate(compareQuerySchema, req.query, 'comparison request');
   res.json({ analyses: await service.compare(symbols) });
 }
+
+export async function decisionReview(req: Request, res: Response): Promise<void> {
+  const { symbol } = validate(symbolParamSchema, req.params, 'ticker');
+  res.json({ review: await service.getDecisionReview(symbol) });
+}

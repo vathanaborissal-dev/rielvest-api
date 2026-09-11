@@ -1,3 +1,4 @@
+import { averageTurnover } from '../../analysis/liquidity.ts';
 import { buildPriceLevels } from '../../analysis/levels.ts';
 import { rsi, volumeRatio, type Bar } from '../../analysis/indicators.ts';
 import { auctionGuidance, buildOrderTicket } from '../../analysis/orderTicket.ts';
@@ -133,12 +134,9 @@ export async function buildDigest(language: 'en' | 'km' = 'en'): Promise<MarketD
     if (bars.length < 20) continue;
 
     const latest = bars.at(-1)!;
+    if (latest.tradeDate !== asOf) continue;
     const previous = bars.at(-2);
-    const recentValues = bars
-      .slice(-20)
-      .map((bar) => bar.value)
-      .filter((value): value is number => value !== null && value > 0);
-    const typicalValue = mean(recentValues);
+    const typicalValue = averageTurnover(bars);
     if (typicalValue === null) continue;
 
     assessed.push({

@@ -47,8 +47,10 @@ export async function ingestNarratives(): Promise<IngestResult> {
 
   for (const company of companies) {
     let analysis;
+    let review;
     try {
       analysis = await companiesService.analyse(company.symbol);
+      review = await companiesService.getDecisionReview(company.symbol);
     } catch (error) {
       warnings.push(`${company.symbol}: ${error instanceof Error ? error.message : String(error)}`);
       continue;
@@ -76,7 +78,7 @@ export async function ingestNarratives(): Promise<IngestResult> {
         continue;
       }
 
-      const result = await narrate(analysis, analysis.narrative, language);
+      const result = await narrate(analysis, analysis.narrative, language, review);
       const data = {
         lines: result.lines,
         source: result.source,

@@ -59,6 +59,10 @@ describe('guardNumbers — legitimate rewording passes', () => {
 });
 
 describe('guardNumbers — invented figures fail', () => {
+  it('rejects nearby prices even inside the former percentage tolerance', () => {
+    assert.equal(guardNumbers('The price is 9,260 riel.', { close: 9240 }).ok, false);
+    assert.equal(guardNumbers('P/E 4.77.', { pe: 4.75 }).ok, false);
+  });
   it('rejects a price that was never supplied', () => {
     const result = guardNumbers('ABC closed at 9,340 riel.', source);
     assert.equal(result.ok, false);

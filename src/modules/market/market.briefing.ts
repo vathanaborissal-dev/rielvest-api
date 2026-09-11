@@ -1,3 +1,4 @@
+import { averageTurnover } from '../../analysis/liquidity.ts';
 import { buildPriceLevels } from '../../analysis/levels.ts';
 import type { Bar } from '../../analysis/indicators.ts';
 import { rangeExtremes, sma, volumeRatio } from '../../analysis/indicators.ts';
@@ -91,11 +92,7 @@ function buildConstraints(
 
   // Today's band is set by the last close, which becomes tomorrow's base price.
   const band = priceBand(latest.close);
-  const recentValues = bars
-    .slice(-20)
-    .map((bar) => bar.value)
-    .filter((value): value is number => value !== null && value > 0);
-  const typicalDailyValue = mean(recentValues);
+  const typicalDailyValue = averageTurnover(bars);
   const sizing = typicalDailyValue === null ? null : orderSizing(typicalDailyValue, latest.close);
 
   return {

@@ -1,3 +1,4 @@
+import { averageTurnover } from './liquidity.ts';
 import { round } from '../core/num.ts';
 import { atr, rangeExtremes, rsi, sma, volumeRatio, type Bar } from './indicators.ts';
 import { buildPriceLevels, type PriceLevels } from './levels.ts';
@@ -201,14 +202,7 @@ export function buildTradePlan(symbol: string, bars: Bar[]): TradePlan {
   zones.push(...merged);
 
   // --- What the exchange allows --------------------------------------------
-  const recentValues = bars
-    .slice(-20)
-    .map((bar) => bar.value)
-    .filter((value): value is number => value !== null && value > 0);
-  const typicalValue =
-    recentValues.length > 0
-      ? recentValues.reduce((sum, value) => sum + value, 0) / recentValues.length
-      : null;
+  const typicalValue = averageTurnover(bars);
   const sizing = typicalValue === null ? null : orderSizing(typicalValue, close);
 
   // --- The quick read -------------------------------------------------------

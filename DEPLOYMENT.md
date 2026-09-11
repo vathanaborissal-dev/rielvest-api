@@ -213,3 +213,16 @@ curl https://<your-api>.vercel.app/api/cron/refresh -H "Authorization: Bearer $C
 ```
 
 Point it at 09:30, 12:00 and 15:30 ICT and the briefing stops saying "figures are from the last completed session" during market hours.
+
+
+## Decision review and Gemini
+
+The briefing shortlist and each company page include an on-demand “Before you consider buying” review. `GET /api/companies/:symbol/decision-review` combines six company-analysis categories with trading liquidity, quote freshness, and the latest filings. It returns strengths, cautions, missing evidence and the next check. A positive research label is not a buy signal or a probability of profit. Coverage is the percentage of categories scored, not completeness of all financial records.
+
+Set `GEMINI_API_KEY` as a **sensitive Production variable on rielvest-api**, then redeploy that project. Do not put this key in the UI project, a `NEXT_PUBLIC_` variable, source control, or browser storage. `GEMINI_MODEL` is optional and defaults to `gemini-3.8-flash`.
+
+The daily ingestion job generates and stores Gemini explanations in English and Khmer. The prompt now includes strengths, cautions, the next check and recent filing titles, in addition to the financial metrics. Public page requests only read stored text; they never invoke Gemini. A missing key, timeout, invalid output or unsupported number falls back to the built-in explanation. The UI identifies the explanation source explicitly. Numeric validation cannot prove every qualitative statement is correct; users can inspect the underlying findings and filings.
+
+After configuring a key, either wait for the next scheduled refresh or run `npm run ingest -- narratives` from a securely configured local environment. Existing successful summaries are cached per stock, session and language; new prompt wording takes effect with the next uncached session. Setting a key alone does not generate summaries.
+
+Turnover gates and order sizes require 20 complete daily turnover observations. Zero-trade sessions count as zero; missing sessions/values do not become invented liquidity. The shortlist also excludes quotes from an older session than the latest market record.
