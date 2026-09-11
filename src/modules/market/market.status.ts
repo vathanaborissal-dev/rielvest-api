@@ -42,6 +42,14 @@ export interface MarketStatus {
   localTime: string;
   /** ISO instant of the next open, or null while trading. */
   nextOpen: string | null;
+  /**
+   * The next thing the exchange will do, and how far away it is.
+   *
+   * At 08:00 the figure that matters is not "the market opens at 09:00" but
+   * "the auction executes in 47 minutes" — the window to enter or amend an
+   * order before it is priced.
+   */
+  nextEvent: { label: string; at: string; minutesAway: number } | null;
   timezone: string;
   sessionHours: string;
 }
@@ -74,6 +82,13 @@ function nextOpenInstant(now: Date): Date {
 }
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** A UTC instant for `minutes` past midnight Cambodian time, on `now`'s day. */
+function cambodiaInstant(now: Date, minutes: number): Date {
+  const shifted = new Date(now.getTime() + CAMBODIA_UTC_OFFSET_MINUTES * 60_000);
+  shifted.setUTCHours(0, minutes, 0, 0);
+  return new Date(shifted.getTime() - CAMBODIA_UTC_OFFSET_MINUTES * 60_000);
+}
 
 export function getMarketStatus(now: Date = new Date()): MarketStatus {
   const { minutes, weekday, hhmm } = cambodiaClock(now);
@@ -108,6 +123,28 @@ export function getMarketStatus(now: Date = new Date()): MarketStatus {
               ? `Closed — today's session ended at 15:00, reopens ${nextOpenDay} at 09:00`
               : `Closed — opens ${nextOpenDay} at 09:00`;
 
+  const nextEvent = (() => {
+    const at =
+      phase === 'pre_open'
+        ? { label: 'Auction executes', instant: cambodiaInstant(now, OPEN_MINUTES) }
+        : phase === 'open'
+          ? { label: 'Closing auction begins', instant: cambodiaInstant(now, CLOSING_AUCTION_MINUTES) }
+          : phase === 'closing_auction'
+            ? { label: 'Closing auction executes', instant: cambodiaInstant(now, CLOSE_MINUTES) }
+            : nextOpen === null
+              ? null
+              // Order entry reopens with the pre-opening auction, an hour
+              // before the market itself opens.
+              : { label: 'Pre-opening auction opens', instant: new Date(nextOpen.getTime() - 60 * 60_000) };
+
+    if (at === null) return null;
+    return {
+      label: at.label,
+      at: at.instant.toISOString(),
+      minutesAway: Math.max(0, Math.round((at.instant.getTime() - now.getTime()) / 60_000)),
+    };
+  })();
+
   return {
     phase,
     isOpen: phase === 'open',
@@ -115,6 +152,7 @@ export function getMarketStatus(now: Date = new Date()): MarketStatus {
     label,
     localTime: hhmm,
     nextOpen: nextOpen?.toISOString() ?? null,
+    nextEvent,
     timezone: 'Asia/Phnom_Penh (UTC+7)',
     sessionHours:
       'Monday to Friday. Pre-opening auction 08:00–09:00, continuous trading 09:00–14:50, ' +

@@ -1,5 +1,6 @@
 import { buildPriceLevels } from '../../analysis/levels.ts';
 import { rsi, volumeRatio, type Bar } from '../../analysis/indicators.ts';
+import { auctionGuidance, buildOrderTicket } from '../../analysis/orderTicket.ts';
 import { orderSizing, priceBand } from '../../analysis/tradingRules.ts';
 import { toDateString, toNumber } from '../../core/decimal.ts';
 import { CAMBODIA_UTC_OFFSET_MINUTES, daysBetween } from '../../core/dates.ts';
@@ -188,18 +189,25 @@ export async function buildDigest(language: 'en' | 'km' = 'en'): Promise<MarketD
     const key = `${event.company?.symbol ?? ''}|${title}`;
     if (seenTitles.has(key)) continue;
     seenTitles.add(key);
+    const eventDate = toDateString(event.eventDate)!;
     news.push({
+      sinceLastSession: asOf !== null && eventDate > asOf,
       symbol: event.company?.symbol ?? event.rawSymbol ?? null,
       name: event.company?.name ?? null,
       title,
-      date: toDateString(event.eventDate)!,
+      date: eventDate,
       url: event.url,
       tradeable: event.company ? tradeableSymbols.has(event.company.symbol) : false,
     });
     if (news.length >= 8) break;
   }
   // Names a reader can act on first; the rest stays visible below.
-  news.sort((a, b) => Number(b.tradeable) - Number(a.tradeable) || b.date.localeCompare(a.date));
+  news.sort(
+    (a, b) =>
+      Number(b.sinceLastSession) - Number(a.sinceLastSession) ||
+      Number(b.tradeable) - Number(a.tradeable) ||
+      b.date.localeCompare(a.date),
+  );
 
   // ---------------------------------------------------------------------
   // The shortlist, drawn only from the tradeable set.
@@ -267,6 +275,20 @@ export async function buildDigest(language: 'en' | 'km' = 'en'): Promise<MarketD
     const sizing = orderSizing(entry.typicalValue, entry.latest.close);
     const other = useSupport ? resistance : support;
 
+    // The pair a trader would actually enter: buy where the price has held,
+    // sell where it has stalled. Either may be unreachable inside today's band.
+    const ticketFor = (level: typeof support, side: 'buy' | 'sell') =>
+      level === null
+        ? null
+        : buildOrderTicket({
+            side,
+            label: level.label,
+            targetPrice: level.price,
+            basePrice: entry.latest.close,
+            typicalDailyValue: entry.typicalValue,
+            tradeDate: asOf,
+          });
+
     scored.push({
       score,
       candidate: {
@@ -285,6 +307,10 @@ export async function buildDigest(language: 'en' | 'km' = 'en'): Promise<MarketD
         limitDown: band.limitDown,
         limitUp: band.limitUp,
         tickSize: band.tickSize,
+        tickets: {
+          buy: ticketFor(support, 'buy'),
+          sell: ticketFor(resistance, 'sell'),
+        },
         workableShares: sizing.comfortableShares,
         workableValueKhr:
           sizing.comfortableShares === null
@@ -362,6 +388,13 @@ export async function buildDigest(language: 'en' | 'km' = 'en'): Promise<MarketD
     statusLabel: status.label,
     headline: { market: marketLine, news: newsLine, source: 'engine' },
     freshness: buildFreshness(asOf, status, now),
+    session: {
+      phase: status.phase,
+      label: status.label,
+      acceptsOrders: status.acceptsOrders,
+      nextEvent: status.nextEvent,
+      guidance: auctionGuidance(status.phase),
+    },
     pulse,
     movers,
     news,

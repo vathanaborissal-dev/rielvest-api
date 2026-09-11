@@ -1,3 +1,5 @@
+import type { OrderTicket } from '../../analysis/orderTicket.ts';
+
 /**
  * The thirty-second answer.
  *
@@ -74,6 +76,8 @@ export interface DigestMover {
 
 /** A disclosure, named and attributed rather than tallied. */
 export interface DigestNewsItem {
+  /** Published after the last session closed — i.e. not yet in any price. */
+  sinceLastSession: boolean;
   symbol: string | null;
   name: string | null;
   title: string;
@@ -123,6 +127,25 @@ export interface DigestFreshness {
   staleNote: string | null;
 }
 
+/**
+ * What the exchange is doing right now, and what that means for an order.
+ *
+ * The briefing is read at 08:00 as often as after the close, and the same
+ * numbers mean different things in each. During the pre-opening auction they
+ * are the basis for an order that will price in under an hour; after 15:00
+ * they are a record.
+ */
+export interface DigestSession {
+  phase: string;
+  label: string;
+  /** True while orders can be entered — auctions included, not just trading. */
+  acceptsOrders: boolean;
+  /** The next thing the exchange will do, and how long until it does it. */
+  nextEvent: { label: string; at: string; minutesAway: number } | null;
+  /** How matching works in this phase. Two or three lines, phase-specific. */
+  guidance: string[];
+}
+
 export interface DigestCandidate {
   symbol: string;
   name: string;
@@ -154,6 +177,13 @@ export interface DigestCandidate {
   /** 20-day average turnover, so liquidity is legible on the card. */
   turnoverKhr: number;
 
+  /**
+   * The two orders this stock actually supports today, already tick-valid and
+   * checked against the daily band. A null side means that level is out of
+   * reach in this session.
+   */
+  tickets: { buy: OrderTicket | null; sell: OrderTicket | null };
+
   /** The transparent score and its parts, so the ranking can be audited. */
   score: number;
   scoreParts: { label: string; points: number }[];
@@ -167,6 +197,8 @@ export interface MarketDigest {
   headline: DigestHeadline;
   /** How current the figures are, and what to call them. */
   freshness: DigestFreshness;
+  /** The trading phase, the countdown, and how orders match right now. */
+  session: DigestSession;
   /** What has been going on — the first question a returning reader asks. */
   pulse: MarketPulse;
   /** Biggest moves among tradeable names. */
