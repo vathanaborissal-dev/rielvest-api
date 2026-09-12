@@ -90,6 +90,7 @@ export interface DigestNewsItem {
 /** One row of the complete tradeable board. */
 export interface DigestBoardRow {
   symbol: string;
+  spark: number[];
   name: string;
   price: number;
   changePercent: number | null;
@@ -148,6 +149,14 @@ export interface DigestSession {
 
 export interface DigestCandidate {
   symbol: string;
+  /**
+   * Recent closes, oldest first, for an inline sparkline.
+   *
+   * A shape carries trend, volatility and where the current price sits in one
+   * glance, with no sentence to read. Raw closes are sent rather than a
+   * pre-drawn path so the interface decides how to render them.
+   */
+  spark: number[];
   name: string;
   price: number;
   changePercent: number | null;

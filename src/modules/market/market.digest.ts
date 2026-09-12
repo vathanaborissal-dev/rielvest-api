@@ -79,6 +79,12 @@ interface Assessed {
   news: { title: string; date: string } | null;
 }
 
+/** Enough sessions to show a shape; few enough to stay legible at 60px wide. */
+const SPARK_SESSIONS = 30;
+
+const sparkline = (bars: Bar[]): number[] =>
+  bars.slice(-SPARK_SESSIONS).map((bar) => bar.close);
+
 const khr = (value: number): string => round(value, 0).toLocaleString('en-US');
 const millions = (value: number): string => `${round(value / 1_000_000, 0)}m`;
 
@@ -291,6 +297,7 @@ export async function buildDigest(language: 'en' | 'km' = 'en'): Promise<MarketD
       score,
       candidate: {
         symbol: entry.symbol,
+        spark: sparkline(entry.bars),
         name: entry.name,
         price: entry.latest.close,
         changePercent: entry.changePercent,
@@ -343,6 +350,7 @@ export async function buildDigest(language: 'en' | 'km' = 'en'): Promise<MarketD
 
       return {
         symbol: entry.symbol,
+        spark: sparkline(entry.bars),
         name: entry.name,
         price: entry.latest.close,
         changePercent: entry.changePercent === null ? null : round(entry.changePercent, 2),
