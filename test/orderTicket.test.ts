@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { auctionGuidance, buildOrderTicket } from '../src/analysis/orderTicket.ts';
+import { buildTradePlan } from '../src/analysis/tradePlan.ts';
 
 /**
  * These use ACLEDA's real figures from the 2026-09-11 session: a 9,240 close,
@@ -79,5 +80,62 @@ describe('auction guidance', () => {
 
   it('says orders queue when the book is shut', () => {
     assert.match(auctionGuidance('closed').join(' '), /opens at 08:00 and prices at 09:00/);
+  });
+});
+
+/**
+ * The company page drew the same ladder as the briefing but without the band
+ * check, so ACLEDA's support zone at 7,840–7,920 rendered as a price to act on
+ * while today's floor was 8,320. Reachability is now decided once, in the plan.
+ */
+describe('plan zones know what today permits', () => {
+  // ACLEDA's shape: a long quiet base, then a sharp run. That is what puts the
+  // 50-day average and every swing low far below the current close — a smooth
+  // drift keeps them inside the band and never exercises this at all.
+  const bars = Array.from({ length: 260 }, (_, i) => {
+    const close = i < 210 ? 7_000 + Math.sin(i / 7) * 120 : 7_000 + (i - 210) * 46;
+    return {
+      tradeDate: new Date(Date.UTC(2025, 0, i + 1)).toISOString().slice(0, 10),
+      open: close, high: close * 1.01, low: close * 0.99, close,
+      volume: 100_000, value: close * 100_000,
+    };
+  });
+
+  it('marks a zone below the daily floor as out of reach', () => {
+    const plan = buildTradePlan('DRIFT', bars);
+    assert.ok(plan.rules, 'expected exchange rules');
+    const unreachable = plan.zones.filter((zone) => !zone.reachableToday);
+    assert.ok(unreachable.length > 0, 'a far support zone should be unreachable');
+    for (const zone of unreachable) {
+      const high = Math.max(zone.from, zone.to ?? zone.from);
+      const low = Math.min(zone.from, zone.to ?? zone.from);
+      assert.ok(
+        high < plan.rules!.limitDown || low > plan.rules!.limitUp,
+        `${zone.label} was marked unreachable but sits inside the band`,
+      );
+    }
+  });
+
+  it('marks zones inside the band as reachable', () => {
+    const plan = buildTradePlan('DRIFT', bars);
+    for (const zone of plan.zones.filter((z) => z.reachableToday)) {
+      const high = Math.max(zone.from, zone.to ?? zone.from);
+      const low = Math.min(zone.from, zone.to ?? zone.from);
+      assert.ok(high >= plan.rules!.limitDown && low <= plan.rules!.limitUp);
+    }
+  });
+
+  it('carries the same ticket construction the briefing uses', () => {
+    const plan = buildTradePlan('DRIFT', bars);
+    assert.ok('buy' in plan.tickets && 'sell' in plan.tickets);
+    for (const ticket of [plan.tickets.buy, plan.tickets.sell]) {
+      if (!ticket) continue;
+      assert.equal(ticket.reachableToday, true, 'a returned ticket is always reachable');
+      assert.equal(ticket.limitPrice! % ticket.tickSize, 0, 'limit sits on the tick grid');
+    }
+  });
+
+  it('sends recent closes for a trend shape', () => {
+    assert.equal(buildTradePlan('DRIFT', bars).spark.length, 30);
   });
 });

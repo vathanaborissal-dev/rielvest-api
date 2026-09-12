@@ -2,6 +2,8 @@ import { averageTurnover } from './liquidity.ts';
 import { round } from '../core/num.ts';
 import { atr, rangeExtremes, rsi, sma, volumeRatio, type Bar } from './indicators.ts';
 import { buildPriceLevels, type PriceLevels } from './levels.ts';
+import type { OrderTicket } from './orderTicket.ts';
+import { buildSessionTicket, typicalSessionRange } from './sessionTicket.ts';
 import {
   orderSizing,
   priceBand,
@@ -36,12 +38,27 @@ export interface PlanZone {
   /** Where it came from, so the reader can disagree with the reasoning. */
   basis: string;
   tone: 'support' | 'resistance' | 'invalidation' | 'neutral';
+  /**
+   * Whether today's ±10% band permits the price to reach this zone at all.
+   *
+   * A support zone fifteen percent below the close cannot trade in this
+   * session at any size — the exchange does not allow the fall. Shown as a
+   * price without that fact, it invites an order that can never fill.
+   */
+  reachableToday: boolean;
 }
 
 export interface TradePlan {
   symbol: string;
   asOf: string | null;
   lastPrice: number | null;
+  /** Recent closes for an inline trend shape. */
+  spark: number[];
+  /**
+   * The two orders today actually supports, tick-valid and band-checked — the
+   * same construction the briefing uses, so the two pages cannot disagree.
+   */
+  tickets: { buy: OrderTicket | null; sell: OrderTicket | null };
   /** How far this stock travels in a typical session, in riel and percent. */
   dailyRange: { khr: number; percent: number } | null;
   zones: PlanZone[];
@@ -79,6 +96,8 @@ export function buildTradePlan(symbol: string, bars: Bar[]): TradePlan {
       symbol,
       asOf: levels.asOf,
       lastPrice: close,
+      spark: bars.slice(-30).map((bar) => bar.close),
+      tickets: { buy: null, sell: null },
       dailyRange: null,
       zones: [],
       rules: null,
@@ -99,7 +118,8 @@ export function buildTradePlan(symbol: string, bars: Bar[]): TradePlan {
   const rsiValue = rsi(bars);
   const volume = volumeRatio(bars);
 
-  const zones: PlanZone[] = [];
+  type DraftZone = Omit<PlanZone, 'reachableToday'>;
+  const zones: DraftZone[] = [];
   const distance = (price: number) => ((price - close) / close) * 100;
 
   // --- Where buyers have previously stepped in ------------------------------
@@ -182,7 +202,7 @@ export function buildTradePlan(symbol: string, bars: Bar[]): TradePlan {
   // Listing them separately implies more independent evidence than exists, so
   // they are merged into one row that names both reasons.
   zones.sort((a, b) => a.from - b.from);
-  const merged: PlanZone[] = [];
+  const merged: DraftZone[] = [];
   for (const zone of zones) {
     const previous = merged.at(-1);
     const withinATick = previous && Math.abs(zone.from - previous.from) <= tickSizeFor(close);
@@ -200,6 +220,18 @@ export function buildTradePlan(symbol: string, bars: Bar[]): TradePlan {
   }
   zones.length = 0;
   zones.push(...merged);
+
+  // A zone the daily band cannot reach is not somewhere an order can rest
+  // today. Derived once here rather than in each interface that draws the
+  // ladder, so the two pages cannot disagree about what is actionable.
+  const pricedZones: PlanZone[] = zones.map((zone) => {
+    const lowEdge = Math.min(zone.from, zone.to ?? zone.from);
+    const highEdge = Math.max(zone.from, zone.to ?? zone.from);
+    return {
+      ...zone,
+      reachableToday: highEdge >= band.limitDown && lowEdge <= band.limitUp,
+    };
+  });
 
   // --- What the exchange allows --------------------------------------------
   const typicalValue = averageTurnover(bars);
@@ -256,12 +288,25 @@ export function buildTradePlan(symbol: string, bars: Bar[]): TradePlan {
     caveats.push('No level below the current price has turned it before, so there is no tested support to reference.');
   }
 
+  const typicalRange = typicalSessionRange(bars);
+  const ticketInput = {
+    basePrice: close,
+    typicalDailyValue: sizing?.typicalDailyValue ?? null,
+    tradeDate: levels.asOf ?? latest.tradeDate,
+    typicalRange,
+  };
+
   return {
     symbol,
     asOf: levels.asOf,
     lastPrice: close,
+    spark: bars.slice(-30).map((bar) => bar.close),
+    tickets: {
+      buy: buildSessionTicket({ ...ticketInput, side: 'buy', level: support }),
+      sell: buildSessionTicket({ ...ticketInput, side: 'sell', level: resistance }),
+    },
     dailyRange: trueRange ? { khr: trueRange, percent: (trueRange / close) * 100 } : null,
-    zones,
+    zones: pricedZones,
     rules: {
       limitDown: band.limitDown,
       limitUp: band.limitUp,
