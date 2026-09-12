@@ -1,5 +1,5 @@
 import { cached } from './cache.ts';
-import { fetchKhmerBusinessHeadlines, fetchYahooQuote, type LiveHeadline, type LiveQuote } from './sources.ts';
+import { fetchMarketHeadlines, fetchYahooQuote, type LiveHeadline, type LiveQuote } from './sources.ts';
 
 /**
  * What moved while Phnom Penh was shut.
@@ -46,6 +46,8 @@ export interface MarketContext {
   /** Gold and the dollar, which Cambodian savers hold as alternatives. */
   benchmarks: LiveQuote[];
   headlines: LiveHeadline[];
+  /** Why the headline list is empty, when it is. */
+  headlinesUnavailableReason: string | null;
   /** One sentence on the region, or null when too little came back. */
   summary: string | null;
   sources: Array<{ label: string; url: string; note: string }>;
@@ -63,14 +65,15 @@ export async function getMarketContext(): Promise<MarketContext> {
     const [region, benchmarks, headlines] = await Promise.all([
       Promise.all(INSTRUMENTS.map((i) => fetchYahooQuote(i.symbol, i.label, i.note, i.key, i.isProxy ?? false))),
       Promise.all(BENCHMARKS.map((i) => fetchYahooQuote(i.symbol, i.label, i.note, i.key, i.isProxy ?? false))),
-      cached('khmer-headlines', NEWS_TTL_SECONDS, () => fetchKhmerBusinessHeadlines(6)),
+      cached('market-headlines', NEWS_TTL_SECONDS, () => fetchMarketHeadlines(6)),
     ]);
 
     return {
       fetchedAt: new Date().toISOString(),
       region,
       benchmarks,
-      headlines,
+      headlines: headlines.items,
+      headlinesUnavailableReason: headlines.unavailableReason,
       summary: summarise(region),
       sources: [
         {
@@ -79,9 +82,11 @@ export async function getMarketContext(): Promise<MarketContext> {
           note: 'Regional indices, gold and FX. Read live on each request and not stored.',
         },
         {
-          label: 'Khmer Times — Business',
-          url: 'https://www.khmertimeskh.com/category/business/',
-          note: 'Headlines and links only. No article text is copied or retained.',
+          label: 'Google News',
+          url: 'https://news.google.com',
+          note:
+            'Headlines and links only, each attributed to its publisher. No article text ' +
+            'is copied or retained.',
         },
       ],
       storage:

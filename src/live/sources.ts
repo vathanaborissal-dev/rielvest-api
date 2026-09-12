@@ -55,6 +55,8 @@ export interface LiveHeadline {
   title: string;
   url: string;
   publishedAt: string | null;
+  /** The publisher, shown so an aggregator link is still attributable. */
+  source: string | null;
 }
 
 async function getText(url: string): Promise<string> {
@@ -162,29 +164,80 @@ export async function fetchYahooQuote(
   }
 }
 
-/** Cambodian business headlines. Titles and links only — no article text. */
-export async function fetchKhmerBusinessHeadlines(limit = 6): Promise<LiveHeadline[]> {
-  try {
-    const xml = await getText('https://www.khmertimeskh.com/category/business/feed/');
-    const items = xml.split('<item>').slice(1, limit + 1);
+export interface HeadlineResult {
+  items: LiveHeadline[];
+  /** Why the feed is empty, when it is. Silence would be indistinguishable
+   *  from "no news today", which is a different and misleading claim. */
+  unavailableReason: string | null;
+}
 
-    return items
-      .map((item) => {
-        const title = pick(item, 'title');
-        const url = pick(item, 'link');
-        const published = pick(item, 'pubDate');
-        if (!title || !url) return null;
-        const at = published ? Date.parse(published) : Number.NaN;
-        return {
-          title,
-          url,
-          publishedAt: Number.isNaN(at) ? null : new Date(at).toISOString(),
-        } satisfies LiveHeadline;
-      })
-      .filter((item): item is LiveHeadline => item !== null);
-  } catch {
-    return [];
+/**
+ * Cambodian market news, via Google News rather than the publishers directly.
+ *
+ * Khmer Times' own RSS answers fine from a residential connection and returns
+ * HTTP 403 from Vercel — its edge blocks datacenter ranges, and no User-Agent
+ * gets around an IP reputation rule. Google News serves the same publishers,
+ * permits server-side fetching, and names the original source on every item.
+ *
+ * The first query is deliberately narrow: a reader here wants the exchange and
+ * the listed companies, not general Cambodia coverage. The broader business
+ * desk is the fallback when that returns nothing.
+ */
+const NEWS_QUERIES = [
+  'Cambodia stock OR CSX OR securities OR listed company when:14d',
+  'site:khmertimeskh.com business',
+] as const;
+
+export async function fetchMarketHeadlines(limit = 6): Promise<HeadlineResult> {
+  let lastReason = 'No query returned any items.';
+
+  for (const query of NEWS_QUERIES) {
+    const url =
+      'https://news.google.com/rss/search?q=' +
+      encodeURIComponent(query) +
+      '&hl=en-US&gl=US&ceid=US:en';
+
+    try {
+      const xml = await getText(url);
+      const items = xml
+        .split('<item>')
+        .slice(1, limit + 1)
+        .map((item) => {
+          const rawTitle = pick(item, 'title');
+          const link = pick(item, 'link');
+          if (!rawTitle || !link) return null;
+
+          // Google appends " - Publisher" to every title; the publisher is
+          // carried separately, so repeating it in the headline is noise.
+          const source = pick(item, 'source');
+          const title =
+            source && rawTitle.endsWith(` - ${source}`)
+              ? rawTitle.slice(0, -(source.length + 3)).trim()
+              : rawTitle;
+
+          const published = pick(item, 'pubDate');
+          const at = published ? Date.parse(published) : Number.NaN;
+
+          return {
+            title,
+            url: link,
+            publishedAt: Number.isNaN(at) ? null : new Date(at).toISOString(),
+            source,
+          } satisfies LiveHeadline;
+        })
+        .filter((item): item is LiveHeadline => item !== null);
+
+      if (items.length > 0) return { items, unavailableReason: null };
+      lastReason = `The feed responded but no items could be read from ${xml.length} bytes.`;
+    } catch (error) {
+      lastReason =
+        error instanceof Error
+          ? `The feed could not be read: ${error.message}.`
+          : 'The feed could not be reached.';
+    }
   }
+
+  return { items: [], unavailableReason: lastReason };
 }
 
 /** First value of an RSS tag, with CDATA and entities unwrapped. */
