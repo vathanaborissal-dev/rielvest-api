@@ -7,6 +7,7 @@ export const marketRouter: Router = Router();
 marketRouter.get('/status', controller.status);
 marketRouter.get('/digest', asyncHandler(controller.digest));
 marketRouter.get('/briefing', asyncHandler(controller.briefing));
+marketRouter.get('/context', asyncHandler(controller.context));
 marketRouter.get('/overview', asyncHandler(controller.overview));
 marketRouter.get('/index', asyncHandler(controller.indexSeries));
 marketRouter.get('/periods', asyncHandler(controller.periods));

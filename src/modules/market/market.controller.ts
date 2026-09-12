@@ -6,9 +6,20 @@ import { getLevelsBoard } from './market.levels.ts';
 import { getMarketStatus } from './market.status.ts';
 import { buildBriefing } from './market.briefing.ts';
 import { buildDigest } from './market.digest.ts';
+import { getMarketContext } from '../../live/context.ts';
 
 const boardQuery = z.object({ board: z.enum(['main', 'growth', 'all']).default('all') });
 const rangeQuery = z.object({ days: z.coerce.number().int().min(1).max(3650).optional() });
+
+/**
+ * Outside context, read live and never stored.
+ *
+ * Cached for a short interval upstream, so this is safe to call on every page
+ * render. A source that is down returns an unavailable row rather than an error.
+ */
+export async function context(_req: Request, res: Response): Promise<void> {
+  res.json(await getMarketContext());
+}
 
 export async function overview(_req: Request, res: Response): Promise<void> {
   res.json(await service.getOverview());
